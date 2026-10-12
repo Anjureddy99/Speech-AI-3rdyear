@@ -17,6 +17,26 @@ app = Flask(__name__)
 app.config['UPLOAD_FOLDER'] = 'static/uploads'
 os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
 
+import subprocess
+
+def convert_to_wav(file_path):
+    wav_path = os.path.splitext(file_path)[0] + "_converted.wav"
+
+    subprocess.run(
+        [
+            "ffmpeg", "-y",
+            "-i", file_path,
+            "-ac", "1",
+            "-ar", "22050",
+            wav_path
+        ],
+        check=True,
+        capture_output=True,
+        text=True
+    )
+
+    return wav_path
+
 # ── LOAD MODELS ────────────────────────────────────────────────────────────────
 audio_model   = joblib.load('models/model_audio.sav')
 audio_scaler  = joblib.load('models/scaler_audio.pkl')
@@ -85,16 +105,23 @@ def get_embedding(text):
     return outputs.last_hidden_state[:, 0, :].detach().numpy()[0]
 
 # ── WAVEFORM ───────────────────────────────────────────────────────────────────
+
 def save_waveform(file_path):
-    y, sr = librosa.load(file_path)
-    plt.figure(figsize=(10, 3))
-    plt.plot(y, color='#38bdf8', linewidth=0.6)
-    plt.title("Waveform", color='#94a3b8')
-    plt.facecolor = '#111827'
-    plt.tight_layout()
+    y, sr = librosa.load(file_path, sr=22050)
+
+    fig, ax = plt.subplots(figsize=(10, 3))
+    time_axis = np.arange(len(y)) / sr
+
+    ax.plot(time_axis, y, color="#38bdf8", linewidth=0.8)
+    ax.set_title("Audio Waveform")
+    ax.set_xlabel("Time (seconds)")
+    ax.set_ylabel("Amplitude")
+    ax.grid(True, alpha=0.2)
+
     path = "static/waveform.png"
-    plt.savefig(path, facecolor='#111827')
-    plt.close()
+    fig.savefig(path, bbox_inches="tight")
+    plt.close(fig)
+
     return path
 
 # ── CONFIDENCE CHART ───────────────────────────────────────────────────────────
@@ -155,15 +182,16 @@ def predict():
     file     = request.files['audio']
     filepath = os.path.join(app.config['UPLOAD_FOLDER'], file.filename)
     file.save(filepath)
+    wav_path = convert_to_wav(filepath)
 
     # ── Audio model ──
-    features        = extract_features(filepath).reshape(1, -1)
+    features = extract_features(wav_path).reshape(1, -1)
     features_scaled = audio_scaler.transform(features)
     audio_pred_idx  = audio_model.predict(features_scaled)[0]
     audio_prob      = float(np.max(audio_model.predict_proba(features_scaled)))
 
     # ── Whisper transcription ──
-    result = whisper_model.transcribe(filepath)
+    result = whisper_model.transcribe(wav_path)
     text   = result['text']
 
     # ── Text model ──
@@ -182,7 +210,7 @@ def predict():
     cefr_code, cefr_title, cefr_desc = get_cefr(final_pred)
 
     # ── Detail scores from real audio ──
-    detail_scores = get_audio_detail_scores(filepath)
+    detail_scores = get_audio_detail_scores(wav_path)
 
     # ── Overall score (weighted avg of detail scores) ──
     overall_score = int(
@@ -193,7 +221,7 @@ def predict():
     )
 
     # ── Visuals ──
-    waveform         = save_waveform(filepath)
+    waveform         = save_waveform(wav_path)
     confidence_chart = save_confidence_chart(audio_prob, text_prob)
 
     # ── Recommendations as structured list ──

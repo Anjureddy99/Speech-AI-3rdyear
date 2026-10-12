@@ -9,3 +9,19 @@ checkpoints/
 *.pt
 *.pth
 *.safetensors
+venv/
+**pycache**/
+*.py[cod]
+
+# Uploaded audio and temporary converted files
+
+static/uploads/*
+
+# Generated analysis charts
+
+static/confidence.png
+static/waveform.png
+
+# Environment variables
+
+.env
